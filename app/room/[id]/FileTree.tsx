@@ -13,7 +13,7 @@ function buildTree(items: PrismaFile[]): TreeItem[] {
   const tree: TreeItem[] = [];
   items.forEach(item => {
     if (item.parentId && itemMap.has(item.parentId)) {
-      itemMap.get(item.parentId)!.children.push(itemMap.get(item.id)!);
+      itemMap.get(item.parentId)!.children.push(itemMap.get(item.id)!)
     } else {
       tree.push(itemMap.get(item.id)!);
     }
