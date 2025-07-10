@@ -1,0 +1,9 @@
+# livekit.yaml
+port: 7880
+
+# For production, replace these with securely generated credentials.
+keys:
+  devkey: supersecret
+
+logging:
+  level: info

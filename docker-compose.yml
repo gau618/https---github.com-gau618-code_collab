@@ -7,11 +7,25 @@ services:
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: collab_db
+      POSTGRES_DB: collab_editor
     ports:
-      - '5432:5432'
+      # Good practice: Using port 5433 avoids conflicts with local PostgreSQL
+      - '5433:5432' 
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: always
+    # --- THIS IS THE CRUCIAL FIX ---
+    # Explicitly set the node's IP address to your machine's local IP.
+    command: --config /etc/livekit.yaml --node-ip 172.28.87.105
+    ports:
+      - '7880:7880'       # Main server port
+      - '7881:7881'       # TURN/TLS port
+      - '7882:7882/udp'   # RTC port
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
 
 volumes:
   postgres_data:
