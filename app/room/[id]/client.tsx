@@ -1,3 +1,4 @@
+// app/room/[id]/client.tsx
 'use client';
 
 import type { File as PrismaFile, Room as PrismaRoom } from '@prisma/client';
@@ -11,15 +12,17 @@ import {
   PanelLeftOpen, 
   Monitor, 
   MonitorOff,
+  Terminal as TerminalIcon,
   Users,
   FileText,
   Crown,
-  Loader2,
-  Settings
+  Loader2
 } from 'lucide-react';
 import FileTree from './FileTree';
 import ManageMembers from './ManageMembers';
 import VideoConferenceComponent from './VideoConference';
+import Terminal from './Terminal';
+import { EditorProvider } from '@/contexts/EditorContext';
 
 const CollaborativeEditor = dynamic(
   () => import('./CollaborativeEditor'),
@@ -51,7 +54,6 @@ type InitialData = {
   };
 };
 
-// Members Popup Component
 function MembersPopup({ 
   members, 
   memberships, 
@@ -110,7 +112,7 @@ function MembersPopup({
                     )}
                   </p>
                   <p className="text-xs text-gray-400 capitalize">
-                    {membership?.role?.toLowerCase() || 'member'}
+                    {membership?.role?.toLowerCase() === 'participant' ? 'member' : membership?.role?.toLowerCase() || 'member'}
                   </p>
                 </div>
               </div>
@@ -145,6 +147,10 @@ export default function RoomClientPage({ initialData }: { initialData: InitialDa
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [videoCollapsed, setVideoCollapsed] = useState(false);
+  const [terminalCollapsed, setTerminalCollapsed] = useState(false);
+
+  const currentFile = room.files.find(f => f.id === activeFileId);
+  const currentFileName = currentFile?.name;
 
   if (!session?.user) {
     return (
@@ -158,126 +164,154 @@ export default function RoomClientPage({ initialData }: { initialData: InitialDa
   }
 
   return (
-    <div className="flex h-screen w-screen bg-gray-900 text-white overflow-hidden">
-      {/* Sidebar - File Tree Only */}
-      <aside 
-        className={`${
-          sidebarCollapsed ? 'w-0' : 'w-80'
-        } transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden flex-shrink-0`}
-      >
-        {!sidebarCollapsed && (
-          <>
-            {/* Sidebar Header */}
-            <div className="p-4 border-b border-gray-700 flex-shrink-0">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2 min-w-0">
-                  <FileText className="w-5 h-5 text-blue-400 flex-shrink-0" />
-                  <h2 className="text-lg font-bold truncate">{room.name}</h2>
+    <EditorProvider>
+      <div className="flex h-screen w-screen bg-gray-900 text-white overflow-hidden">
+        {/* Sidebar - File Tree Only */}
+        <aside 
+          className={`${
+            sidebarCollapsed ? 'w-0' : 'w-80'
+          } transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden flex-shrink-0`}
+        >
+          {!sidebarCollapsed && (
+            <>
+              {/* Sidebar Header */}
+              <div className="p-4 border-b border-gray-700 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 min-w-0">
+                    <FileText className="w-5 h-5 text-blue-400 flex-shrink-0" />
+                    <h2 className="text-lg font-bold truncate">{room.name}</h2>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSidebarCollapsed(true)}
+                    className="text-gray-400 hover:text-white flex-shrink-0"
+                  >
+                    <PanelLeftClose className="w-4 h-4" />
+                  </Button>
                 </div>
+              </div>
+
+              {/* File Tree Section - Full Height */}
+              <div className="flex-1 p-4 overflow-y-auto min-h-0">
+                <FileTree
+                  initialItems={room.files}
+                  roomId={room.id}
+                  onFileSelect={setActiveFileId}
+                  activeFileId={activeFileId}
+                />
+              </div>
+            </>
+          )}
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {/* Top Bar with Members and Controls */}
+          <div className="h-12 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4 flex-shrink-0">
+            <div className="flex items-center space-x-4 min-w-0">
+              {sidebarCollapsed && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setSidebarCollapsed(true)}
+                  onClick={() => setSidebarCollapsed(false)}
                   className="text-gray-400 hover:text-white flex-shrink-0"
                 >
-                  <PanelLeftClose className="w-4 h-4" />
+                  <PanelLeftOpen className="w-4 h-4" />
                 </Button>
-              </div>
+              )}
+              
+              {activeFileId && (
+                <div className="flex items-center space-x-2 min-w-0">
+                  <FileText className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                  <span className="text-sm font-medium truncate">
+                    {currentFileName || 'Untitled'}
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* File Tree Section - Full Height */}
-            <div className="flex-1 p-4 overflow-y-auto min-h-0">
-              <FileTree
-                initialItems={room.files}
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              {/* Members Popup */}
+              <MembersPopup
+                members={members}
+                memberships={initialData.room.memberships}
+                currentUserId={session.user.id}
                 roomId={room.id}
-                onFileSelect={setActiveFileId}
-                activeFileId={activeFileId}
+                isAdmin={currentUserMembership?.role === 'ADMIN'}
               />
-            </div>
-          </>
-        )}
-      </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top Bar with Members and Controls */}
-        <div className="h-12 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4 flex-shrink-0">
-          <div className="flex items-center space-x-4 min-w-0">
-            {sidebarCollapsed && (
+              {/* Terminal Toggle */}
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setSidebarCollapsed(false)}
-                className="text-gray-400 hover:text-white flex-shrink-0"
+                onClick={() => setTerminalCollapsed(!terminalCollapsed)}
+                className="text-gray-400 hover:text-white"
               >
-                <PanelLeftOpen className="w-4 h-4" />
-              </Button>
-            )}
-            
-            {activeFileId && (
-              <div className="flex items-center space-x-2 min-w-0">
-                <FileText className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                <span className="text-sm font-medium truncate">
-                  {room.files.find(f => f.id === activeFileId)?.name || 'Untitled'}
+                <TerminalIcon className="w-4 h-4" />
+                <span className="ml-2 text-xs hidden sm:inline">
+                  {terminalCollapsed ? 'Show Terminal' : 'Hide Terminal'}
                 </span>
-              </div>
-            )}
+              </Button>
+
+              {/* Video Toggle */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVideoCollapsed(!videoCollapsed)}
+                className="text-gray-400 hover:text-white"
+              >
+                {videoCollapsed ? (
+                  <Monitor className="w-4 h-4" />
+                ) : (
+                  <MonitorOff className="w-4 h-4" />
+                )}
+                <span className="ml-2 text-xs hidden sm:inline">
+                  {videoCollapsed ? 'Join Video' : 'Stop Video'}
+                </span>
+              </Button>
+            </div>
           </div>
 
-          <div className="flex items-center space-x-2 flex-shrink-0">
-            {/* Members Popup */}
-            <MembersPopup
-              members={members}
-              memberships={initialData.room.memberships}
-              currentUserId={session.user.id}
-              roomId={room.id}
-              isAdmin={currentUserMembership?.role === 'ADMIN'}
+          {/* Editor Area */}
+          <div className="flex-1 relative min-h-0 overflow-hidden">
+            <CollaborativeEditor
+              fileId={activeFileId}
+              fileName={currentFileName}
+              currentUser={{ 
+                id: session.user.id, 
+                name: session.user.name || 'Anonymous' 
+              }}
             />
-
-            {/* Video Toggle */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setVideoCollapsed(!videoCollapsed)}
-              className="text-gray-400 hover:text-white"
-            >
-              {videoCollapsed ? (
-                <Monitor className="w-4 h-4" />
-              ) : (
-                <MonitorOff className="w-4 h-4" />
-              )}
-              <span className="ml-2 text-xs hidden sm:inline">
-                {videoCollapsed ? 'Join Video call' : 'Stop Video call'}
-              </span>
-            </Button>
           </div>
-        </div>
 
-        {/* Editor Area */}
-        <div className="flex-1 relative min-h-0 overflow-hidden">
-          <CollaborativeEditor
-            fileId={activeFileId}
-            currentUser={{ 
-              id: session.user.id, 
-              name: session.user.name || 'Anonymous' 
-            }}
+          {/* Terminal Area */}
+          <Terminal
+            roomId={room.id}
+            currentFile={currentFile ? {
+              id: currentFile.id,
+              name: currentFile.name,
+              content: '' // Not used anymore since we get content from editor
+            } : undefined}
+            isCollapsed={terminalCollapsed}
+            onToggleCollapse={() => setTerminalCollapsed(!terminalCollapsed)}
           />
-        </div>
 
-        {/* Video Conference Area */}
-        {!videoCollapsed && (
-          <div className="h-80 border-t-2 border-gray-700 bg-black relative flex-shrink-0 overflow-hidden">
-            <div className="absolute top-2 left-2 z-10">
-              <div className="bg-black/50 backdrop-blur-sm rounded px-2 py-1">
-                <span className="text-xs text-white font-medium">Video Conference</span>
+          {/* Video Conference Area */}
+          {!videoCollapsed && (
+            <div className="h-80 border-t-2 border-gray-700 bg-black relative flex-shrink-0 overflow-hidden">
+              <div className="absolute top-2 left-2 z-10">
+                <div className="bg-black/50 backdrop-blur-sm rounded px-2 py-1">
+                  <span className="text-xs text-white font-medium">Video Conference</span>
+                </div>
+              </div>
+              <div className="h-full w-full overflow-hidden">
+                <VideoConferenceComponent roomId={initialData.room.id} />
               </div>
             </div>
-            <div className="h-full w-full overflow-hidden">
-              <VideoConferenceComponent roomId={initialData.room.id} />
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
+          )}
+        </main>
+      </div>
+    </EditorProvider>
   );
 }

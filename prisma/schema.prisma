@@ -115,3 +115,13 @@ model VerificationToken {
   expires    DateTime
   @@unique([identifier, token])
 }
+
+model ExecutionResult {
+  id        String   @id @default(uuid())
+  jobId     String   @unique
+  status    String   @default("PENDING") // PENDING, COMPLETED, FAILED
+  output    String?
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

@@ -1,4 +1,3 @@
-# docker-compose.yml
 version: '3.8'
 services:
   db:
@@ -9,24 +8,47 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: collab_editor
     ports:
-      # Good practice: Using port 5433 avoids conflicts with local PostgreSQL
-      - '5433:5432' 
+      - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   livekit:
     image: livekit/livekit-server:latest
     restart: always
-    # --- THIS IS THE CRUCIAL FIX ---
-    # Explicitly set the node's IP address to your machine's local IP.
     command: --config /etc/livekit.yaml --node-ip 172.28.87.105
     ports:
-      - '7880:7880'       # Main server port
-      - '7881:7881'       # TURN/TLS port
-      - '7882:7882/udp'   # RTC port
+      - '7880:7880'
+      - '7881:7881'
+      - '7882:7882/udp'
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml
+
+  # --- NEW: Redis service for the job queue ---
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+
+  # --- NEW: Definitions for our sandbox images ---
+  # These are not run as services but are built by `docker-compose build`
+  sandbox-python:
+    build: ./docker/sandbox-python
+
+  sandbox-node:
+    build: ./docker/sandbox-node
+
+  sandbox-cpp:
+    build: ./docker/sandbox-cpp
+
+  sandbox-java:
+    build: ./docker/sandbox-java
 
 volumes:
   postgres_data:
     name: code-collab-db-data
+  # --- NEW: Volume for Redis data persistence ---
+  redis_data:
+    name: code-collab-redis-data

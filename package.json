@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "hocuspocus": "tsx watch server.ts"
+    "hocuspocus": "tsx watch server.ts",
+    "worker":"tsx watch worker.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.10.0",
@@ -23,8 +24,11 @@
     "@radix-ui/react-dropdown-menu": "^2.1.15",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-slot": "^1.2.3",
+    "bullmq": "^5.56.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dockerode": "^4.0.7",
+    "ioredis": "^5.6.1",
     "jsonwebtoken": "^9.0.2",
     "leveldown": "^6.1.1",
     "livekit-client": "^2.15.2",
@@ -46,6 +50,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
+    "@types/dockerode": "^3.3.42",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
     "@types/react": "^19",
