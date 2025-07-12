@@ -57,6 +57,8 @@ const getLanguageFromFileName = (fileName: string): string => {
     'yml': 'yaml',
     'md': 'markdown',
     'markdown': 'markdown',
+    'cpp': 'cpp',
+  'java': 'java',
   };
   
   return languageMap[extension || ''] || 'plaintext';
