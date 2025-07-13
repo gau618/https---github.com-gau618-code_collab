@@ -1,10 +1,10 @@
-// app/room/[id]/client.tsx
 'use client';
 
 import type { File as PrismaFile, Room as PrismaRoom } from '@prisma/client';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
+import { Rnd } from 'react-rnd';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { 
@@ -16,7 +16,12 @@ import {
   Users,
   FileText,
   Crown,
-  Loader2
+  Loader2,
+  X,
+  Maximize2,
+  Minimize2,
+  Move,
+  RotateCcw
 } from 'lucide-react';
 import FileTree from './FileTree';
 import ManageMembers from './ManageMembers';
@@ -53,6 +58,134 @@ type InitialData = {
     }>;
   };
 };
+
+// Floating Video Widget Component
+function FloatingVideoWidget({ 
+  roomId, 
+  isVisible, 
+  onClose, 
+  onMinimize, 
+  isMinimized 
+}: {
+  roomId: string;
+  isVisible: boolean;
+  onClose: () => void;
+  onMinimize: () => void;
+  isMinimized: boolean;
+}) {
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [position, setPosition] = useState({ x: 50, y: 50 });
+  const [size, setSize] = useState({ width: 400, height: 300 });
+
+  if (!isVisible) return null;
+
+  const handleMaximize = () => {
+    setIsMaximized(!isMaximized);
+    if (!isMaximized) {
+      setPosition({ x: 20, y: 20 });
+      setSize({ width: window.innerWidth - 40, height: window.innerHeight - 40 });
+    } else {
+      setPosition({ x: 50, y: 50 });
+      setSize({ width: 400, height: 300 });
+    }
+  };
+
+  const handleReset = () => {
+    setPosition({ x: 50, y: 50 });
+    setSize({ width: 400, height: 300 });
+    setIsMaximized(false);
+  };
+
+  return (
+    <Rnd
+      size={isMinimized ? { width: 200, height: 40 } : size}
+      position={position}
+      onDragStop={(e, d) => setPosition({ x: d.x, y: d.y })}
+      onResizeStop={(e, direction, ref, delta, position) => {
+        if (!isMinimized) {
+          setSize({
+            width: parseInt(ref.style.width),
+            height: parseInt(ref.style.height),
+          });
+          setPosition(position);
+        }
+      }}
+      minWidth={isMinimized ? 200 : 300}
+      minHeight={isMinimized ? 40 : 200}
+      maxWidth={window.innerWidth - 20}
+      maxHeight={window.innerHeight - 20}
+      bounds="window"
+      dragHandleClassName="video-widget-header"
+      className="z-50"
+      style={{
+        zIndex: 9999,
+      }}
+      enableResizing={!isMinimized}
+      disableDragging={false}
+    >
+      <div className="h-full w-full bg-gray-900 border-2 border-gray-600 rounded-lg shadow-2xl overflow-hidden">
+        {/* Widget Header */}
+        <div className="video-widget-header bg-gray-800 border-b border-gray-600 px-3 py-2 flex items-center justify-between cursor-move">
+          <div className="flex items-center space-x-2">
+            <Monitor className="w-4 h-4 text-blue-400" />
+            <span className="text-sm font-medium text-white">Video Call</span>
+            <Move className="w-3 h-3 text-gray-400" />
+          </div>
+          
+          <div className="flex items-center space-x-1">
+            {!isMinimized && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleReset}
+                  className="h-6 w-6 p-0 text-gray-400 hover:text-white hover:bg-gray-700"
+                  title="Reset Position"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleMaximize}
+                  className="h-6 w-6 p-0 text-gray-400 hover:text-white hover:bg-gray-700"
+                  title={isMaximized ? "Restore" : "Maximize"}
+                >
+                  <Maximize2 className="w-3 h-3" />
+                </Button>
+              </>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onMinimize}
+              className="h-6 w-6 p-0 text-gray-400 hover:text-white hover:bg-gray-700"
+              title={isMinimized ? "Expand" : "Minimize"}
+            >
+              <Minimize2 className="w-3 h-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="h-6 w-6 p-0 text-gray-400 hover:text-red-400 hover:bg-gray-700"
+              title="Close"
+            >
+              <X className="w-3 h-3" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Widget Content */}
+        {!isMinimized && (
+          <div className="flex-1 bg-black relative overflow-hidden" style={{ height: 'calc(100% - 40px)' }}>
+            <VideoConferenceComponent roomId={roomId} />
+          </div>
+        )}
+      </div>
+    </Rnd>
+  );
+}
 
 function MembersPopup({ 
   members, 
@@ -146,11 +279,30 @@ export default function RoomClientPage({ initialData }: { initialData: InitialDa
     room.files[0]?.id ?? null,
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [videoCollapsed, setVideoCollapsed] = useState(false);
+  const [videoVisible, setVideoVisible] = useState(false);
+  const [videoMinimized, setVideoMinimized] = useState(false);
   const [terminalCollapsed, setTerminalCollapsed] = useState(false);
 
   const currentFile = room.files.find(f => f.id === activeFileId);
   const currentFileName = currentFile?.name;
+
+  const handleVideoToggle = () => {
+    if (videoVisible) {
+      setVideoVisible(false);
+      setVideoMinimized(false);
+    } else {
+      setVideoVisible(true);
+    }
+  };
+
+  const handleVideoMinimize = () => {
+    setVideoMinimized(!videoMinimized);
+  };
+
+  const handleVideoClose = () => {
+    setVideoVisible(false);
+    setVideoMinimized(false);
+  };
 
   if (!session?.user) {
     return (
@@ -165,7 +317,7 @@ export default function RoomClientPage({ initialData }: { initialData: InitialDa
 
   return (
     <EditorProvider>
-      <div className="flex h-screen w-screen bg-gray-900 text-white overflow-hidden">
+      <div className="flex h-screen w-screen bg-gray-900 text-white overflow-hidden relative">
         {/* Sidebar - File Tree Only */}
         <aside 
           className={`${
@@ -258,16 +410,20 @@ export default function RoomClientPage({ initialData }: { initialData: InitialDa
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setVideoCollapsed(!videoCollapsed)}
-                className="text-gray-400 hover:text-white"
+                onClick={handleVideoToggle}
+                className={`${
+                  videoVisible 
+                    ? 'text-blue-400 hover:text-blue-300 bg-blue-500/10' 
+                    : 'text-gray-400 hover:text-white'
+                }`}
               >
-                {videoCollapsed ? (
-                  <Monitor className="w-4 h-4" />
-                ) : (
+                {videoVisible ? (
                   <MonitorOff className="w-4 h-4" />
+                ) : (
+                  <Monitor className="w-4 h-4" />
                 )}
                 <span className="ml-2 text-xs hidden sm:inline">
-                  {videoCollapsed ? 'Join Video' : 'Stop Video'}
+                  {videoVisible ? 'Close Video' : 'Open Video'}
                 </span>
               </Button>
             </div>
@@ -296,21 +452,16 @@ export default function RoomClientPage({ initialData }: { initialData: InitialDa
             isCollapsed={terminalCollapsed}
             onToggleCollapse={() => setTerminalCollapsed(!terminalCollapsed)}
           />
-
-          {/* Video Conference Area */}
-          {!videoCollapsed && (
-            <div className="h-80 border-t-2 border-gray-700 bg-black relative flex-shrink-0 overflow-hidden">
-              <div className="absolute top-2 left-2 z-10">
-                <div className="bg-black/50 backdrop-blur-sm rounded px-2 py-1">
-                  <span className="text-xs text-white font-medium">Video Conference</span>
-                </div>
-              </div>
-              <div className="h-full w-full overflow-hidden">
-                <VideoConferenceComponent roomId={initialData.room.id} />
-              </div>
-            </div>
-          )}
         </main>
+
+        {/* Floating Video Widget */}
+        <FloatingVideoWidget
+          roomId={room.id}
+          isVisible={videoVisible}
+          onClose={handleVideoClose}
+          onMinimize={handleVideoMinimize}
+          isMinimized={videoMinimized}
+        />
       </div>
     </EditorProvider>
   );

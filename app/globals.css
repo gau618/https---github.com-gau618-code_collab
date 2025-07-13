@@ -153,3 +153,45 @@
 .animation-delay-4000 {
   animation-delay: 4s;
 }
+
+/* Video widget enhancements */
+.video-widget-header {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.video-widget-header:active {
+  cursor: grabbing !important;
+}
+
+/* Smooth transitions */
+.rnd-container {
+  transition: box-shadow 0.2s ease;
+}
+
+.rnd-container:hover {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+}
+
+/* Terminal resize handle enhancements */
+.terminal-resize-handle {
+  transition: all 0.2s ease;
+  border-radius: 3px 3px 0 0;
+}
+
+.terminal-resize-handle:hover {
+  background-color: #4b5563 !important;
+  transform: scaleY(1.2);
+}
+
+.terminal-resize-handle:active {
+  background-color: #3b82f6 !important;
+  transform: scaleY(1.5);
+}
+
+/* Smooth terminal transitions */
+.terminal-container {
+  transition: height 0.1s ease-out;
+}
