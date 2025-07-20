@@ -1,10 +1,10 @@
+// File: app/room/[id]/CollaborativeEditor.tsx
+
 "use client";
 
 import Editor, { OnMount } from "@monaco-editor/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as Y from "yjs";
 import { MonacoBinding } from "y-monaco";
-import { HocuspocusProvider } from "@hocuspocus/provider";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,25 +21,17 @@ import {
   StopCircle,
 } from "lucide-react";
 import { useEditor } from "@/contexts/EditorContext";
-import { speak, stopSpeaking } from "@/utils/speech";
+import { speak, stopSpeaking } from "@/utils/speech"; // Assuming you have this utility
 
 /* -------------------------------------------------------------------------- */
-/*  Type definitions                                                          */
+/*  Type definitions                                                         */
 /* -------------------------------------------------------------------------- */
 type Status = "connecting" | "online" | "offline" | "error";
 type AiActivityStatus = "idle" | "listening" | "generating" | "speaking";
-type Props = {
-  fileId: string | null;
-  currentUser: { id: string; name: string };
-  fileName?: string;
-};
 
 /* -------------------------------------------------------------------------- */
-/*  Language helpers & shared caches                                          */
+/*  Language helpers                                                        */
 /* -------------------------------------------------------------------------- */
-const docCache = new Map<string, Y.Doc>();
-const providerCache = new Map<string, HocuspocusProvider>();
-
 const getLanguageFromFileName = (fileName: string): string => {
   const extension = fileName.split(".").pop()?.toLowerCase();
   const languageMap: Record<string, string> = {
@@ -59,17 +51,13 @@ const getLanguageFromFileName = (fileName: string): string => {
 };
 
 /* -------------------------------------------------------------------------- */
-/*  Main component                                                            */
+/*  Main component                                                          */
 /* -------------------------------------------------------------------------- */
-export default function CollaborativeEditor({
-  fileId,
-  currentUser,
-  fileName,
-}: Props) {
+export default function CollaborativeEditor() {
   /* ---------------------------- auth / context --------------------------- */
   const { data: session, status: authStatus } = useSession();
+  const { currentFile, provider, yDoc, getCurrentCode } = useEditor();
   const jwt = session?.accessToken as string | undefined;
-  const { setGetCurrentContent } = useEditor();
 
   /* ---------------------------- local state ------------------------------ */
   const [editor, setEditor] = useState<any>(null);
@@ -77,20 +65,134 @@ export default function CollaborativeEditor({
   const [connStatus, setConnStatus] = useState<Status>("offline");
   const [collaborators, setCollaborators] = useState<number>(0);
   const [showSettings, setShowSettings] = useState(false);
-  const [currentLanguage, setCurrentLanguage] = useState<string>("javascript");
+  const [currentLanguage, setCurrentLanguage] = useState<string>("plaintext");
   const bindingRef = useRef<MonacoBinding>();
 
   const [aiActivityStatus, setAiActivityStatus] =
     useState<AiActivityStatus>("idle");
-  const apiAbortControllerRef = useRef<AbortController | null>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-
-  /* --------------------- voice-synthesis state --------------------------- */
   const [availableVoices, setAvailableVoices] = useState<
     SpeechSynthesisVoice[]
   >([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState<string | null>(null);
+  const apiAbortControllerRef = useRef<AbortController | null>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
+  /* ----------------------- Update language on file change ----------------- */
+  useEffect(() => {
+    if (currentFile?.name) {
+      const newLang = getLanguageFromFileName(currentFile.name);
+      setCurrentLanguage(newLang);
+      if (editor && monaco) {
+        const model = editor.getModel();
+        if (model) monaco.editor.setModelLanguage(model, newLang);
+      }
+    }
+  }, [currentFile?.name, editor, monaco]);
+
+  /* ----------------------------- onMount -------------------------------- */
+  const onMount: OnMount = (editorInstance, monacoInstance) => {
+    setEditor(editorInstance);
+    setMonaco(monacoInstance);
+  };
+
+  /* ---------------------------------------------------------------------- */
+  /*  Connection Status & Monaco Binding                                  */
+  /* ---------------------------------------------------------------------- */
+  useEffect(() => {
+    if (editor && monaco && yDoc && provider) {
+      const yText = yDoc.getText("monaco");
+      const model = editor.getModel();
+
+      const onStatus = ({ status }: { status: string }) =>
+        setConnStatus(status as Status);
+      const onAwarenessChange = () =>
+        setCollaborators(
+          provider.awareness.getStates().size > 0
+            ? provider.awareness.getStates().size - 1
+            : 0
+        );
+
+      provider.on("status", onStatus);
+      provider.awareness.on("change", onAwarenessChange);
+
+      if (model) {
+        bindingRef.current?.destroy();
+        bindingRef.current = new MonacoBinding(
+          yText,
+          model,
+          new Set([editor]),
+          provider.awareness
+        );
+        provider.awareness.setLocalStateField("user", {
+          name: session?.user?.name || "Anonymous",
+          color: `#${Math.floor(Math.random() * 16777215).toString(16)}`,
+        });
+      }
+
+      return () => {
+        provider.off("status", onStatus);
+        provider.awareness.off("change", onAwarenessChange);
+        bindingRef.current?.destroy();
+      };
+    }
+  }, [editor, monaco, yDoc, provider, session?.user]);
+
+  /* ---------------------------------------------------------------------- */
+  /*  AI INLINE AUTO-COMPLETION                                            */
+  /* ---------------------------------------------------------------------- */
+  useEffect(() => {
+    if (!editor || !monaco) return;
+
+    const inlineCompletionsProvider =
+      monaco.languages.registerInlineCompletionsProvider(
+        { pattern: "**" }, // Register for all languages
+        {
+          async provideInlineCompletions(
+            model: any,
+            position: any,
+            context: any,
+            token: any
+          ) {
+            const codeContext = model.getValue();
+            const currentLine = model.getLineContent(position.lineNumber);
+            if (
+              !currentLine.trim() ||
+              context.triggerKind !==
+                monaco.languages.InlineCompletionTriggerKind.Automatic
+            ) {
+              return { items: [] };
+            }
+
+            try {
+              const res = await fetch("/api/gemini-assist", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  codeContext,
+                  language: currentLanguage,
+                  currentLine,
+                }),
+              });
+
+              if (!res.ok) return { items: [] };
+              const { suggestion } = await res.json();
+
+              if (suggestion && !token.isCancellationRequested) {
+                return { items: [{ insertText: suggestion.trim() }] };
+              }
+            } catch (err) {
+              console.error("[InlineSuggest] Error:", err);
+            }
+            return { items: [] };
+          },
+          freeInlineCompletions() {},
+        }
+      );
+
+    return () => inlineCompletionsProvider.dispose();
+  }, [editor, monaco, currentLanguage]);
+
+  /* --------------------- voice-synthesis setup --------------------------- */
   useEffect(() => {
     const loadVoices = () => {
       const voices = window.speechSynthesis.getVoices();
@@ -109,106 +211,7 @@ export default function CollaborativeEditor({
     };
   }, [selectedVoiceURI]);
 
-  /* ----------------------- update language on file ---------------------- */
-  useEffect(() => {
-    if (fileName) setCurrentLanguage(getLanguageFromFileName(fileName));
-  }, [fileName]);
-
-  /* ------------------------ expose getter to ctx ------------------------ */
-  useEffect(() => {
-    if (editor) setGetCurrentContent(() => () => editor.getValue() || "");
-  }, [editor, setGetCurrentContent]);
-
-  /* ----------------------------- onMount -------------------------------- */
-  const onMount: OnMount = (editorInstance, monacoInstance) => {
-    setEditor(editorInstance);
-    setMonaco(monacoInstance);
-
-    /* set language immediately so Monaco has correct tokenisation */
-    if (fileName) {
-      const language = getLanguageFromFileName(fileName);
-      const model = editorInstance.getModel();
-      if (model) monacoInstance.editor.setModelLanguage(model, language);
-    }
-  };
-
-  /* ---------------------------------------------------------------------- */
-  /*  INLINE SUGGESTIONS: **fixed `text` key**                              */
-  /* ---------------------------------------------------------------------- */
-useEffect(() => {
-  if (!editor || !monaco) return;
-
-  console.log("[InlineSuggest] Registering inline completions...");
-
-  const provider = monaco.languages.registerInlineCompletionsProvider(
-    currentLanguage,
-    {
-      async provideInlineCompletions(model, position, context, token) {
-        const codeContext = model.getValue();
-        const currentLine = model.getLineContent(position.lineNumber);
-
-        if (!currentLine.trim()) {
-          return { items: [] };
-        }
-
-        try {
-          console.log("[InlineSuggest] Fetching suggestion from Gemini...");
-
-          const res = await fetch("/api/gemini-assist", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              codeContext,
-              language: currentLanguage,
-              currentLine,
-            }),
-          });
-
-          if (!res.ok) {
-            console.error("[InlineSuggest] Request failed:", res.statusText);
-            return { items: [] };
-          }
-
-          const { suggestion } = await res.json();
-
-          if (suggestion && !token.isCancellationRequested) {
-            const range = {
-              startLineNumber: position.lineNumber,
-              startColumn: position.column,
-              endLineNumber: position.lineNumber,
-              endColumn: position.column,
-            };
-
-            return {
-              items: [
-                {
-                  insertText: suggestion.trim(),
-                  range,
-                  command: { id: "", title: "AI Suggestion" },
-                },
-              ],
-            };
-          }
-        } catch (err) {
-          console.error("[InlineSuggest] Error fetching:", err);
-        }
-
-        return { items: [] };
-      },
-      freeInlineCompletions() {},
-    }
-  );
-
-  return () => {
-    provider.dispose();
-    console.log("[InlineSuggest] Provider disposed.");
-  };
-}, [editor, monaco, currentLanguage]);
-
-
-  /* ---------------------------------------------------------------------- */
-  /*  AI voice question / answer helpers                                    */
-  /* ---------------------------------------------------------------------- */
+  /* --------------------- AI voice question / answer helpers -------------- */
   const handleStopAI = useCallback(() => {
     stopSpeaking();
     recognitionRef.current?.abort();
@@ -217,36 +220,29 @@ useEffect(() => {
   }, []);
 
   const handleAskDoubt = useCallback(() => {
-    if (aiActivityStatus !== "idle" || !editor) return;
-
+    if (aiActivityStatus !== "idle") return;
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert("Voice recognition is not supported by your browser.");
       return;
     }
-
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
     recognition.lang = "en-US";
     recognition.interimResults = false;
-
     recognition.onstart = () => setAiActivityStatus("listening");
-
     recognition.onresult = async (event) => {
       setAiActivityStatus("generating");
       const question = event.results[0][0].transcript;
-      const codeContext = editor.getValue();
-
+      const codeContext = getCurrentCode();
       apiAbortControllerRef.current = new AbortController();
       const { signal } = apiAbortControllerRef.current;
-
       try {
         const selectedVoice = availableVoices.find(
           (v) => v.voiceURI === selectedVoiceURI
         );
         const targetLanguage = selectedVoice?.lang || "en-US";
-
         const res = await fetch("/api/gemini-doubt", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -258,12 +254,10 @@ useEffect(() => {
           }),
           signal,
         });
-
         if (!res.ok) {
           const { error } = await res.json();
           throw new Error(error || `status: ${res.status}`);
         }
-
         const { answer } = await res.json();
         if (!signal.aborted) {
           setAiActivityStatus("speaking");
@@ -278,116 +272,27 @@ useEffect(() => {
         if (!signal.aborted) setAiActivityStatus("idle");
       }
     };
-
     recognition.onerror = (event) => {
       console.error("Speech recognition error:", event.error);
       setAiActivityStatus("idle");
     };
-
     recognition.onend = () => {
       recognitionRef.current = null;
       setAiActivityStatus((prev) => (prev === "listening" ? "idle" : prev));
     };
-
     recognition.start();
   }, [
-    editor,
-    currentLanguage,
+    getCurrentCode,
     aiActivityStatus,
     availableVoices,
     selectedVoiceURI,
+    currentLanguage,
   ]);
 
   /* ---------------------------------------------------------------------- */
-  /*  Connection status & awareness                                         */
+  /*  Early-return UI states                                              */
   /* ---------------------------------------------------------------------- */
-  const handleStatus = useCallback(({ status }: { status: string }) => {
-    setConnStatus(
-      status === "connected"
-        ? "online"
-        : status === "connecting"
-        ? "connecting"
-        : "offline"
-    );
-  }, []);
-
-  const handleAwarenessChange = useCallback(() => {
-    if (bindingRef.current?.awareness)
-      setCollaborators(bindingRef.current.awareness.getStates().size - 1);
-  }, []);
-
-  /* ---------------------------------------------------------------------- */
-  /*  Shared-doc / provider bootstrap                                       */
-  /* ---------------------------------------------------------------------- */
-  useEffect(() => {
-    if (!fileId || !editor || !jwt) return;
-
-    /* ensure model has correct language */
-    const model = editor.getModel();
-    if (!model) return;
-
-    if (fileName) {
-      const lang = getLanguageFromFileName(fileName);
-      setCurrentLanguage(lang);
-      monaco?.editor.setModelLanguage(model, lang);
-    }
-
-    /* obtain or create Y.Doc */
-    const ydoc =
-      docCache.get(fileId) ??
-      (() => {
-        const d = new Y.Doc();
-        docCache.set(fileId, d);
-        return d;
-      })();
-
-    /* cache provider per-user so multiple tabs re-use same socket */
-    const cacheKey = `${fileId}:${jwt}`;
-    let provider = providerCache.get(cacheKey);
-    if (!provider) {
-      provider = new HocuspocusProvider({
-        url: process.env.NEXT_PUBLIC_HOCUSPOCUS_URL ?? "ws://localhost:8081",
-        name: fileId,
-        token: jwt,
-        useAuthenticationToken: true,
-        document: ydoc,
-      });
-      providerCache.set(cacheKey, provider);
-    }
-
-    provider.on("status", handleStatus);
-
-    /* bind Monaco ↔️ Yjs */
-    bindingRef.current?.destroy(); // clean previous
-    bindingRef.current = new MonacoBinding(
-      ydoc.getText("monaco"),
-      model,
-      new Set([editor]),
-      provider.awareness
-    );
-    bindingRef.current.awareness.on("change", handleAwarenessChange);
-
-    /* cleanup */
-    return () => {
-      provider.off("status", handleStatus);
-      bindingRef.current?.awareness.off("change", handleAwarenessChange);
-      bindingRef.current?.destroy();
-      bindingRef.current = undefined;
-    };
-  }, [
-    fileId,
-    editor,
-    jwt,
-    monaco,
-    fileName,
-    handleStatus,
-    handleAwarenessChange,
-  ]);
-
-  /* ---------------------------------------------------------------------- */
-  /*  Early-return UI states                                                */
-  /* ---------------------------------------------------------------------- */
-  if (!fileId)
+  if (!currentFile)
     return (
       <EmptyState
         icon={<FileText className="w-12 h-12 text-gray-400" />}
@@ -395,7 +300,6 @@ useEffect(() => {
         description="Select a file from the sidebar to start collaborating"
       />
     );
-
   if (authStatus === "loading")
     return (
       <EmptyState
@@ -404,7 +308,6 @@ useEffect(() => {
         description="Verifying your credentials..."
       />
     );
-
   if (!jwt)
     return (
       <EmptyState
@@ -420,31 +323,25 @@ useEffect(() => {
     );
 
   /* ---------------------------------------------------------------------- */
-  /*  Render                                                                */
+  /*  Render                                                                */
   /* ---------------------------------------------------------------------- */
   return (
     <div className="h-full w-full relative bg-gray-900 overflow-hidden">
-      {/* top bar */}
       <div className="absolute top-0 left-0 right-0 z-10 bg-gray-800 border-b border-gray-700 px-4 py-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <StatusIndicator status={connStatus} />
             <CollaboratorCount count={collaborators} />
-            {fileName && (
-              <LanguageIndicator
-                language={currentLanguage}
-                fileName={fileName}
-              />
+            {currentFile.name && (
+              <LanguageIndicator language={currentLanguage} />
             )}
           </div>
-
           <div className="flex items-center space-x-2">
             {aiActivityStatus === "idle" ? (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleAskDoubt}
-                className="text-gray-300 hover:text-white"
                 title="Ask AI a Question"
               >
                 <Mic className="w-4 h-4" />
@@ -460,7 +357,6 @@ useEffect(() => {
                 <StopCircle className="w-4 h-4 animate-pulse" />
               </Button>
             )}
-
             <Button
               variant="ghost"
               size="sm"
@@ -468,7 +364,6 @@ useEffect(() => {
             >
               <Settings className="w-4 h-4" />
             </Button>
-
             <Button variant="ghost" size="sm">
               <Share2 className="w-4 h-4" />
             </Button>
@@ -478,11 +373,9 @@ useEffect(() => {
           </div>
         </div>
       </div>
-
-      {/* editor */}
       <div className="pt-12 h-full w-full overflow-hidden">
         <Editor
-          key={fileId}
+          key={currentFile.id} // This key is crucial for re-mounting the editor on file change
           height="100%"
           language={currentLanguage}
           theme="vs-dark"
@@ -491,59 +384,25 @@ useEffect(() => {
             fontSize: 14,
             minimap: { enabled: true },
             wordWrap: "on",
-            lineNumbers: "on",
-            renderWhitespace: "selection",
-            smoothScrolling: true,
-            cursorBlinking: "smooth",
+            inlineSuggest: { enabled: true },
+            automaticLayout: true,
             fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",
             fontLigatures: true,
-            padding: { top: 16, bottom: 16 },
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            tabSize: currentLanguage === "python" ? 4 : 2,
-            insertSpaces: true,
-            detectIndentation: true,
-            formatOnPaste: true,
-            formatOnType: true,
-            suggestOnTriggerCharacters: true,
-            acceptSuggestionOnEnter: "on",
-            quickSuggestions: true,
-            parameterHints: { enabled: true },
-            hover: { enabled: true },
-            contextmenu: true,
-            mouseWheelZoom: true,
-            multiCursorModifier: "ctrlCmd",
-            selectionHighlight: true,
-            occurrencesHighlight: true,
-            codeLens: true,
-            folding: true,
-            foldingStrategy: "auto",
-            showFoldingControls: "mouseover",
-            matchBrackets: "always",
-            autoClosingBrackets: "always",
-            autoClosingQuotes: "always",
-            autoSurround: "languageDefined",
-            inlineSuggest: { enabled: true },
           }}
         />
       </div>
-
-      {/* settings pop-over */}
       {showSettings && (
         <div className="absolute top-12 right-4 bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4 z-20 min-w-64">
           <h3 className="text-white font-medium mb-3">Editor Settings</h3>
-
           <div className="space-y-2 text-sm">
             <div className="flex justify-between items-center text-gray-300">
               <span>File:</span>
-              <span className="font-mono text-xs">{fileName || "N/A"}</span>
+              <span className="font-mono text-xs">{currentFile.name}</span>
             </div>
-
             <div className="flex justify-between items-center text-gray-300">
               <span>Language:</span>
               <span className="capitalize">{currentLanguage}</span>
             </div>
-
             <div className="flex justify-between items-center text-gray-300 pt-2 border-t border-gray-700/50">
               <label htmlFor="voice-select" className="mr-2">
                 AI Voice:
@@ -569,42 +428,8 @@ useEffect(() => {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Helper components                                                         */
+/*  Helper components                                                       */
 /* -------------------------------------------------------------------------- */
-function LanguageIndicator({
-  language,
-  fileName,
-}: {
-  language: string;
-  fileName: string;
-}) {
-  const getLanguageColor = (lang: string): string => {
-    const colorMap: Record<string, string> = {
-      javascript: "text-yellow-400",
-      typescript: "text-blue-400",
-      python: "text-green-400",
-      html: "text-orange-400",
-      css: "text-blue-300",
-      json: "text-yellow-300",
-      markdown: "text-gray-300",
-    };
-    return colorMap[lang] || "text-gray-400";
-  };
-  return (
-    <div className="flex items-center space-x-2 px-2 py-1 bg-gray-700/50 rounded">
-      <div
-        className={`w-2 h-2 rounded-full ${getLanguageColor(language).replace(
-          "text-",
-          "bg-"
-        )}`}
-      />
-      <span className={`text-xs font-medium ${getLanguageColor(language)}`}>
-        {language.toUpperCase()}
-      </span>
-    </div>
-  );
-}
-
 function StatusIndicator({ status }: { status: Status }) {
   const config = {
     online: {
@@ -632,7 +457,6 @@ function StatusIndicator({ status }: { status: Status }) {
       text: "Error",
     },
   }[status];
-
   return (
     <div
       className={`flex items-center space-x-2 px-3 py-1 rounded-full ${config.bg}`}
@@ -653,6 +477,32 @@ function CollaboratorCount({ count }: { count: number }) {
         {count === 0
           ? "Just you"
           : `${count + 1} collaborator${count > 0 ? "s" : ""}`}
+      </span>
+    </div>
+  );
+}
+
+function LanguageIndicator({ language }: { language: string }) {
+  const getLanguageColor = (lang: string): string =>
+    ({
+      javascript: "text-yellow-400",
+      typescript: "text-blue-400",
+      python: "text-green-400",
+      html: "text-orange-400",
+      css: "text-blue-300",
+      json: "text-yellow-300",
+      markdown: "text-gray-300",
+    }[lang] || "text-gray-400");
+  return (
+    <div className="flex items-center space-x-2 px-2 py-1 bg-gray-700/50 rounded">
+      <div
+        className={`w-2 h-2 rounded-full ${getLanguageColor(language).replace(
+          "text-",
+          "bg-"
+        )}`}
+      />
+      <span className={`text-xs font-medium ${getLanguageColor(language)}`}>
+        {language.toUpperCase()}
       </span>
     </div>
   );

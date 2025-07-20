@@ -36,7 +36,7 @@ model User {
   // Add role and memberships relation
   role          Role         @default(PARTICIPANT)
   memberships   Membership[]
-
+  interviewSessions InterviewSession[]
   accounts      Account[]
   sessions      Session[]
   createdAt     DateTime     @default(now())
@@ -50,6 +50,7 @@ model Room {
   inviteKey   String       @unique @default(cuid())
   files       File[]
   memberships Membership[]
+  interviewSession InterviewSession?
   createdAt   DateTime     @default(now())
 }
 
@@ -124,4 +125,36 @@ model ExecutionResult {
   error     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+// This model will store all data related to a single interview session
+model InterviewSession {
+  id        String   @id @default(cuid())
+  role      String
+  level     String
+  techStack String[]
+  questions Json
+  ownerId   String
+  status    InterviewStatus @default(SCHEDULED)
+  
+  // The final report from Gemini will be stored here as a JSON object
+  feedback  Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  // An interview can optionally be linked to a collaborative coding room
+  room   Room?  @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  roomId String? @unique
+
+  @@index([ownerId])
 }
